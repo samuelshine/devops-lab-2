@@ -1,0 +1,122 @@
+# Lab 2 - Basic CI workflow triggered by commits (GitHub Actions)
+name: CI
+
+# --- TRIGGERS -------------------------------------------------------------
+# The pipeline runs automatically on every commit pushed to these branches,
+# on every pull request opened against main, and can also be started by hand
+# from the Actions tab.
+on:
+  push:
+    branches: [main, develop, 'feature/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel an in-progress run if a newer commit lands on the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # --- JOB 1: static analysis --------------------------------------------
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the commit
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+  # --- JOB 2: tests on several Node versions ------------------------------
+  test:
+    name: Test (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['20', '22', '24']
+    steps:
+      - name: Check out the commit
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test
+
+  # --- JOB 3: build, gated on lint + tests passing ------------------------
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+      - name: Check out the commit
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the bundle
+        run: npm run build
+
+      - name: Upload the build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ github.sha }}
+          path: dist/
+          retention-days: 7
+
+  # --- JOB 4: report the overall result -----------------------------------
+  summary:
+    name: Pipeline summary
+    runs-on: ubuntu-latest
+    needs: [lint, test, build]
+    if: always()
+    steps:
+      - name: Write the job summary
+        run: |
+          {
+            echo "## CI pipeline result"
+            echo ""
+            echo "| Stage | Result |"
+            echo "| ----- | ------ |"
+            echo "| Lint  | ${{ needs.lint.result }} |"
+            echo "| Test  | ${{ needs.test.result }} |"
+            echo "| Build | ${{ needs.build.result }} |"
+            echo ""
+            echo "Triggered by \`${{ github.event_name }}\` on \`${{ github.ref_name }}\`"
+            echo "Commit: \`${{ github.sha }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if any stage failed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "One or more CI stages did not pass."
+          exit 1
