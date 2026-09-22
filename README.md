@@ -1,5 +1,7 @@
 # DevOps Lab 2 — Basic CI Workflow with GitHub Actions
 
+[![CI](https://github.com/samuelshine/devops-lab-2/actions/workflows/ci.yml/badge.svg)](https://github.com/samuelshine/devops-lab-2/actions/workflows/ci.yml)
+
 **Aim:** Design and implement a basic CI workflow triggered by commits, using GitHub Actions.
 
 A small Node.js project serves as the subject under test. Every commit pushed to the
@@ -104,18 +106,30 @@ earlier stage fails.
 
 ## 5. Verifying the pipeline actually catches problems
 
-To confirm the CI is doing real work rather than always passing green, break
-something on a branch and watch it fail:
+A pipeline that is always green proves nothing. To confirm this one does real
+work, a test was deliberately broken on a branch and pushed:
 
 ```bash
-git checkout -b feature/break-ci
-# change `assert.equal(add(2, 3), 5)` to `assert.equal(add(2, 3), 6)`
-git commit -am "Intentionally break a test"
-git push -u origin feature/break-ci
+git checkout -b feature/verify-ci-catches-failures
+# changed  assert.equal(add(2, 3), 5)  ->  assert.equal(add(2, 3), 6)
+git commit -am "Temporarily break a test"
+git push -u origin feature/verify-ci-catches-failures
 ```
 
-The `Test` job goes red, `Build` is skipped because its `needs:` are unmet, and
-`Summary` reports the failure.
+The `feature/**` trigger fired and the pipeline reported:
+
+| Job | Result | Why |
+| --- | ------ | --- |
+| Lint | ✅ success | No dependency on the tests, so it still ran and passed |
+| Test (Node 20) | ❌ failure | The broken assertion |
+| Test (Node 22) | ❌ failure | `fail-fast: false` — every version still reports |
+| Test (Node 24) | ❌ failure | |
+| Build | ⏭️ **skipped** | Its `needs: [lint, test]` were not satisfied |
+| Pipeline summary | ❌ failure | `if: always()` ran it; it failed the run |
+
+The key result is **Build being skipped** — no artifact can be produced from code
+that failed its tests. The branch was deleted afterwards; the failed run remains
+in the Actions history as evidence.
 
 ## 6. Result
 
